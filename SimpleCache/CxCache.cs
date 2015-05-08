@@ -17,6 +17,9 @@ namespace SimpleCache
     protected abstract void UpdateElementAccess(ICacheValue cacheValue);
     protected abstract void CacheValueInvalidated(ICacheValue cacheValue);
 
+    /// <summary>
+    /// Не гарантируется, что элементы хранящиеся в списке не будут удалены при попытке доступа к ним.
+    /// </summary>
     public virtual int Count
     {
       get { return this.ValueCacheById.Count; }
@@ -57,20 +60,8 @@ namespace SimpleCache
       return cacheValue;
     }
 
-    protected virtual void InvalidateUnlocked(int id)
+    protected virtual void InvalidateUnlocked(ICacheValue value)
     {
-      var value = this.GetCacheValueUnlocked(id);
-      if (value != null)
-      {
-        this.ValueCacheById.Remove(value.Value.Id);
-        this.ValueCacheByKey.Remove(value.Value.Key);
-        this.CacheValueInvalidated(value);
-      }
-    }
-
-    protected virtual void InvalidateUnlocked(string key)
-    {
-      var value = this.GetCacheValueUnlocked(key);
       if (value != null)
       {
         this.ValueCacheById.Remove(value.Value.Id);
@@ -127,7 +118,8 @@ namespace SimpleCache
     {
       lock (this.SyncRoot)
       {
-        this.InvalidateUnlocked(id);
+        var value = this.GetCacheValueUnlocked(id);
+        this.InvalidateUnlocked(value);
       }
     }
 
@@ -135,7 +127,8 @@ namespace SimpleCache
     {
       lock (this.SyncRoot)
       {
-        this.InvalidateUnlocked(key);
+        var value = this.GetCacheValueUnlocked(key);
+        this.InvalidateUnlocked(value);
       }
     }
 

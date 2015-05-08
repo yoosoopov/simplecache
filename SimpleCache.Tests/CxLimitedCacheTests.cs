@@ -53,6 +53,27 @@ namespace SimpleCache.Tests
     }
 
     [TestMethod]
+    public void CacheExpiresByTimeNoTimerTest()
+    {
+      using (var cache = new CxLimitedCache<CxFund>(100, 100, TimeSpan.FromSeconds(2), TimeSpan.FromHours(1)))
+      {
+        var fund = new CxFund { Id = 1, Key = "test1" };
+        CxFund temp;
+
+        cache.AddValue(fund);
+        Assert.AreEqual(cache.Count, 1);
+        Assert.IsTrue(cache.TryGetValue(fund.Id, out temp));
+        Assert.AreEqual(fund, temp);
+
+        Thread.Sleep(TimeSpan.FromSeconds(4));
+
+        // expires on access
+        Assert.AreEqual(cache.Count, 1);
+        Assert.IsFalse(cache.TryGetValue(fund.Id, out temp));
+      }
+    }
+
+    [TestMethod]
     public void CacheExpiresByAccessCountTest()
     {
       using (var cache = new CxLimitedCache<CxFund>(100, 1, TimeSpan.FromSeconds(600), TimeSpan.FromSeconds(60)))

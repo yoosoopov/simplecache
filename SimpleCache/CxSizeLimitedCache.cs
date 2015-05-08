@@ -44,7 +44,7 @@ namespace SimpleCache
       // remove all entries from end of list until max size is satisfied
       while (this.indexList.Count > this.MaxSize)
       {
-        this.InvalidateUnlocked(this.indexList.Last.Value.Key);
+        this.InvalidateUnlocked(this.indexList.Last.Value.Value);
       }
     }
 
