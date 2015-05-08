@@ -23,33 +23,36 @@ namespace SimpleCache
     private const int DefaultExpiryIntervalSec = 600;
     private const int DefaultMaxAccessCount = 50;
     private readonly LinkedList<KeyValuePair<int, CacheValue>> indexList = new LinkedList<KeyValuePair<int, CacheValue>>();
-    private TimeSpan expiryInterval;
+    private TimeSpan? timerInterval;
     private Timer expiryTimer;
     private int expiryIsRunning = 0;
 
-    public TimeSpan MaxEntryAge { get; set; }
+    public TimeSpan? MaxEntryAge { get; set; }
 
     public int MaxSize { get; set; }
 
-    public TimeSpan ExpiryInterval
+    public TimeSpan? TimerInterval
     {
-      get { return this.expiryInterval; }
+      get { return this.timerInterval; }
       set
       {
-        this.expiryInterval = value;
+        this.timerInterval = value;
         this.DisposeTimer();
-        this.expiryTimer = new Timer(o => this.Expire(), null, value, value);
+        if (value != null)
+        {
+          this.expiryTimer = new Timer(o => this.Expire(), null, value.Value, value.Value);
+        }
       }
     }
 
     public int MaxAccessCount { get; set; }
 
-    public CxLimitedCache(int maxSize, int maxAccessCount, TimeSpan maxEntryAge, TimeSpan expiryInterval)
+    public CxLimitedCache(int maxSize, int maxAccessCount, TimeSpan? maxEntryAge, TimeSpan? timerInterval)
     {
       this.MaxSize = maxSize;
       this.MaxAccessCount = maxAccessCount;
       this.MaxEntryAge = maxEntryAge;
-      this.ExpiryInterval = expiryInterval;
+      this.TimerInterval = timerInterval;
     }
 
     public CxLimitedCache(int maxSize, TimeSpan maxEntryAge)
@@ -83,7 +86,8 @@ namespace SimpleCache
 
     protected virtual ICacheValue CheckValueExpiration(ICacheValue value)
     {
-      if (value != null && (((CacheValue)value).CreatedAt + this.MaxEntryAge) < DateTime.Now)
+      var maxAge = this.MaxEntryAge;
+      if (maxAge != null && value != null && (((CacheValue)value).CreatedAt + maxAge.Value) < DateTime.Now)
       {
         // remove elemnt on access if cache value expired
         this.InvalidateUnlocked(value);
@@ -109,33 +113,39 @@ namespace SimpleCache
     {
       var value = (CacheValue)cacheValue;
 
-      // put element at front of the index list
-      // remove first if already present in list, create new otherwise
-      var idxRef = value.IndexRef;
-      if (idxRef != null)
+      if (this.MaxSize > 0)
       {
-        this.indexList.Remove(idxRef);
+        // put element at front of the index list
+        // remove first if already present in list, create new otherwise
+        var idxRef = value.IndexRef;
+        if (idxRef != null)
+        {
+          this.indexList.Remove(idxRef);
+        }
+        else
+        {
+          idxRef = new LinkedListNode<KeyValuePair<int, CacheValue>>(new KeyValuePair<int, CacheValue>(cacheValue.Value.Id, value));
+          value.IndexRef = idxRef;
+        }
+
+        this.indexList.AddFirst(idxRef);
+
+        // remove all entries from end of list until max size is satisfied
+        while (this.indexList.Count > this.MaxSize)
+        {
+          this.InvalidateUnlocked(this.indexList.Last.Value.Value);
+        }
       }
-      else
+
+      if (this.MaxAccessCount > 0)
       {
-        idxRef = new LinkedListNode<KeyValuePair<int, CacheValue>>(new KeyValuePair<int, CacheValue>(cacheValue.Value.Id, value));
-        value.IndexRef = idxRef;
-      }
+        value.AccessCount++;
 
-      this.indexList.AddFirst(idxRef);
-
-      // remove all entries from end of list until max size is satisfied
-      while (this.indexList.Count > this.MaxSize)
-      {
-        this.InvalidateUnlocked(this.indexList.Last.Value.Value);
-      }
-
-      value.AccessCount++;
-
-      // remove element if max access count limit exceeded
-      if (value.AccessCount > this.MaxAccessCount)
-      {
-        this.InvalidateUnlocked(value);
+        // remove element if max access count limit exceeded
+        if (value.AccessCount > this.MaxAccessCount)
+        {
+          this.InvalidateUnlocked(value);
+        }
       }
     }
 
@@ -168,11 +178,14 @@ namespace SimpleCache
         {
           var maxAge = this.MaxEntryAge;
 
-          foreach (var cacheValue in this.ValueCacheById)
+          if (maxAge != null)
           {
-            if (((CacheValue)cacheValue.Value).CreatedAt + maxAge < DateTime.Now)
+            foreach (var cacheValue in this.ValueCacheById)
             {
-              this.InvalidateUnlocked(cacheValue.Value);
+              if (((CacheValue)cacheValue.Value).CreatedAt + maxAge.Value < DateTime.Now)
+              {
+                this.InvalidateUnlocked(cacheValue.Value);
+              }
             }
           }
         }
