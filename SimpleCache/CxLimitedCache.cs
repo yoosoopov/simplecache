@@ -15,6 +15,7 @@ namespace SimpleCache
       }
 
       public LinkedListNode<KeyValuePair<int, CacheValue>> IndexRef { get; set; }
+      public LinkedListNode<KeyValuePair<int, CacheValue>> IndexTimeRef { get; set; }
       public TValue Value { get; set; }
       public DateTime CreatedAt { get; set; }
       public int AccessCount { get; set; }
@@ -23,9 +24,11 @@ namespace SimpleCache
     private const int DefaultExpiryIntervalSec = 600;
     private const int DefaultMaxAccessCount = 50;
     private readonly LinkedList<KeyValuePair<int, CacheValue>> indexList = new LinkedList<KeyValuePair<int, CacheValue>>();
+    private readonly LinkedList<KeyValuePair<int, CacheValue>> indexTimeList = new LinkedList<KeyValuePair<int, CacheValue>>();
     private TimeSpan? timerInterval;
     private Timer expiryTimer;
     private int expiryIsRunning = 0;
+    private int timerStartsCount = 0;
 
     public TimeSpan? MaxEntryAge { get; set; }
 
@@ -47,7 +50,9 @@ namespace SimpleCache
 
     public int MaxAccessCount { get; set; }
 
-    public CxLimitedCache(int maxSize, int maxAccessCount, TimeSpan? maxEntryAge, TimeSpan? timerInterval)
+    public int TimerStartsCount { get { return this.timerStartsCount; } }
+
+    public CxLimitedCache(int maxSize, TimeSpan? maxEntryAge, int maxAccessCount, TimeSpan? timerInterval)
     {
       this.MaxSize = maxSize;
       this.MaxAccessCount = maxAccessCount;
@@ -56,7 +61,7 @@ namespace SimpleCache
     }
 
     public CxLimitedCache(int maxSize, TimeSpan maxEntryAge)
-      : this(maxSize, DefaultMaxAccessCount, maxEntryAge, TimeSpan.FromSeconds(DefaultExpiryIntervalSec))
+      : this(maxSize, maxEntryAge, DefaultMaxAccessCount, TimeSpan.FromSeconds(DefaultExpiryIntervalSec))
     {
     }
 
@@ -113,6 +118,18 @@ namespace SimpleCache
     {
       var value = (CacheValue)cacheValue;
 
+      if (this.MaxEntryAge != null)
+      {
+        var idxTimeRef = value.IndexTimeRef;
+
+        if (idxTimeRef == null)
+        {
+          idxTimeRef = new LinkedListNode<KeyValuePair<int, CacheValue>>(new KeyValuePair<int, CacheValue>(cacheValue.Value.Id, value));
+          value.IndexTimeRef = idxTimeRef;
+          this.indexTimeList.AddFirst(idxTimeRef);
+        }
+      }
+
       if (this.MaxSize > 0)
       {
         // put element at front of the index list
@@ -129,6 +146,16 @@ namespace SimpleCache
         }
 
         this.indexList.AddFirst(idxRef);
+
+        if (this.MaxEntryAge != null && this.indexTimeList.Count > 0)
+        {
+          var maxAge = this.MaxEntryAge;
+          LinkedListNode<KeyValuePair<int, CacheValue>> node;
+          while ((node = this.indexTimeList.Last) != null && node.Value.Value.CreatedAt + maxAge < DateTime.Now)
+          {
+            this.InvalidateUnlocked(this.indexList.Last.Value.Value);
+          }
+        }
 
         // remove all entries from end of list until max size is satisfied
         while (this.indexList.Count > this.MaxSize)
@@ -156,7 +183,17 @@ namespace SimpleCache
 
     protected override void CacheValueInvalidated(ICacheValue cacheValue)
     {
-      this.indexList.Remove(((CacheValue)cacheValue).IndexRef);
+      var value = (CacheValue)cacheValue;
+
+      if (value.IndexRef != null)
+      {
+        this.indexList.Remove(value.IndexRef);
+      }
+
+      if (value.IndexTimeRef != null)
+      {
+        this.indexTimeList.Remove(value.IndexTimeRef);
+      }
     }
 
     protected override void FlushUnlocked()
@@ -180,7 +217,13 @@ namespace SimpleCache
 
           if (maxAge != null)
           {
+            IList<KeyValuePair<int, ICacheValue>> list = new List<KeyValuePair<int, ICacheValue>>();
             foreach (var cacheValue in this.ValueCacheById)
+            {
+              list.Add(cacheValue);
+            }
+
+            foreach (var cacheValue in list)
             {
               if (((CacheValue)cacheValue.Value).CreatedAt + maxAge.Value < DateTime.Now)
               {
@@ -188,6 +231,8 @@ namespace SimpleCache
               }
             }
           }
+
+          this.timerStartsCount++;
         }
       }
       finally
